@@ -601,15 +601,21 @@ def _print_highlights(stats, summary, conv, outdir: Path) -> None:
         )
     if not conv.empty:
         final = conv.iloc[-1]
-        # drift at n conformers is 0 by definition, so quote n-1.
-        informative = conv.iloc[-2] if len(conv) > 1 else final
-        print(
-            f"\nensemble: {int(final.n_conformers)} conformers, "
-            f"mean SEM {final.mean_sem:.3f} REU. Dropping to "
-            f"{int(informative.n_conformers)} conformers would move the mean ddG by "
-            f"{informative.mean_abs_drift:.3f} REU on average "
-            f"({informative.max_abs_drift:.3f} REU at worst)."
-        )
+        if len(conv) < 2:
+            print(
+                "\nensemble: 1 conformer, so there are no error bars. Re-run with "
+                "-n 10 or more to get a standard deviation and significance."
+            )
+        else:
+            # drift at n conformers is 0 by definition, so quote n-1.
+            informative = conv.iloc[-2]
+            print(
+                f"\nensemble: {int(final.n_conformers)} conformers, "
+                f"mean SEM {final.mean_sem:.3f} REU. Dropping to "
+                f"{int(informative.n_conformers)} conformers would move the mean ddG "
+                f"by {informative.mean_abs_drift:.3f} REU on average "
+                f"({informative.max_abs_drift:.3f} REU at worst)."
+            )
     print(f"\nall results in {outdir}")
     print(f"  tables  {outdir / 'stats'}")
     print(f"  figures {outdir / 'plots'}")

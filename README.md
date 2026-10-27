@@ -2,6 +2,10 @@
 
 **Ensemble-based interface mutational scanning (ΔΔG) on the GPU, built on [TMol](https://github.com/uw-ipd/tmol).**
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_colab.ipynb)
+
+**No GPU? [Run it on a free Colab GPU](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_colab.ipynb)** — no installation, no cluster.
+
 `tmol-mutscan` relaxes a complex into a conformational ensemble, performs
 saturation mutagenesis at the positions you choose, and reports the change in
 binding energy (ΔΔG) for every substitution — with proper ensemble statistics,
@@ -22,6 +26,7 @@ scoring call.
 
 ## Contents
 
+- [Run it on Google Colab](#run-it-on-google-colab)
 - [How it works](#how-it-works)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -33,6 +38,36 @@ scoring call.
 - [Reproducibility](#reproducibility)
 - [Limitations and caveats](#limitations-and-caveats)
 - [Citation](#citation)
+
+---
+
+## Run it on Google Colab
+
+If you do not have a local GPU or cluster access, the notebook in
+[`colab/tmol_mutscan_colab.ipynb`](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_colab.ipynb) runs the whole pipeline on
+Colab's free GPU.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_colab.ipynb)
+
+It installs everything, fetches or accepts your structure, exposes every option
+as a form field (no code editing), streams the scan log with a live ETA, shows
+the figures and tables inline, and zips the results for download or saves them
+to your Google Drive.
+
+Points worth knowing before you start:
+
+- **Turn the GPU on first**: Runtime → Change runtime type → T4 GPU. The
+  notebook checks and tells you if it is missing; it still runs on CPU, just
+  much more slowly.
+- **Colab assigns whatever GPU is free**, so speed varies between sessions. The
+  notebook prints the pose count before you commit and measures its own
+  throughput as it goes, rather than quoting a number that may not match your
+  session.
+- **Free sessions disconnect** after roughly 90 minutes idle or 12 hours total,
+  and a GPU is not guaranteed. For long scans, use the notebook's *save to
+  Google Drive* option, or build the ensemble once and scan subsets separately.
+- **Use mmCIF for ligands.** The notebook warns you if it finds `HETATM`
+  records in a `.pdb` input, since PDB files carry no bond orders.
 
 ---
 
