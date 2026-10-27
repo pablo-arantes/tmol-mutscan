@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tmol-mutscan"
+version = "0.1.0"
+description = "Ensemble-based interface mutational scanning (ddG) on GPU with TMol"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Pablo R. Arantes" }]
+keywords = [
+    "structural-biology", "protein-design", "ddg", "mutational-scanning",
+    "rosetta", "tmol", "pytorch", "gpu", "protein-ligand", "peptide",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "tmol>=0.2.0",
+    "torch>=2.11",
+    "numpy>=1.25",
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+cu12 = ["tmol[cu12]>=0.2.0"]
+cu13 = ["tmol[cu13]>=0.2.0"]
+
+[project.urls]
+Homepage = "https://github.com/pablo-arantes/tmol-mutscan"
+Issues = "https://github.com/pablo-arantes/tmol-mutscan/issues"
+"TMol upstream" = "https://github.com/uw-ipd/tmol"
+
+[project.scripts]
+tmol-mutscan = "tmol_mutscan.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tmol_mutscan*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,8 @@
+# Runtime requirements. For GPU, install a CUDA-enabled PyTorch first, then
+# `pip install "tmol[cu12]"` (or cu13) to match your CUDA major version.
+tmol>=0.2.0
+torch>=2.11
+numpy>=1.25
+scipy>=1.13
+pandas>=2.2
+matplotlib>=3.7
