@@ -418,6 +418,10 @@ The primary data; everything else is derived from it. One row per
 | `ddg` | `e_mut − e_wt`. **Negative = predicted tighter binding.** |
 | `ratio` | `e_mut / e_wt` — the original notebook's ratio, for comparison. |
 | `percentage` | `(e_mut − e_wt) / e_wt` — the original notebook's percentage. |
+| `total_wt`, `total_mut` | Whole-pose score of the control and the mutant, **excluding `ref`** (REU). |
+| `ddg_total` | `total_mut − total_wt`: the change to the whole molecule, not just the interface. |
+| `strain` | `ddg_total − ddg`: the part of the change that is *not* cross-partner — rotamer strain and intra-chain contacts. |
+| `ddg_ref` | Change in Rosetta's per-residue `ref` constant, reported for transparency and excluded from the totals (see below). |
 | `achieved_name3` | What the packer actually built (a cross-check on `mut_name3`). |
 | `skipped` | Empty when the request was honoured, otherwise why it was not. |
 
@@ -465,6 +469,30 @@ every substitution gets the following.
 | `q_value` | **Benjamini–Hochberg FDR** across every substitution. A 23-position × 20-substitution scan is 460 tests; raw p-values cannot be read directly. |
 | `significant` | `q_value < --alpha`. |
 | `effect` | `stabilizing` / `neutral` / `destabilizing` / `wild-type`, combining significance with `--stabilizing-cutoff`. |
+
+### Hidden intramolecular cost (v0.2.0)
+
+The reported ΔΔG sums **cross-partner block pairs only**, so anything the
+mutation does inside its own chain is invisible to it. A substitution that has
+to adopt a strained rotamer, or that clashes with its own neighbours, can
+improve the interface term while making the molecule worse overall.
+
+| Column | Meaning |
+|---|---|
+| `ddg_total_mean` | Change in whole-pose score (excluding `ref`). |
+| `strain_mean` | `ddg_total − ddg` — the non-interface part. Positive means the molecule pays internally for the interface gain. |
+| `strain_flag` | Set when `ddg_mean < 0` **and** `strain_mean > --strain-cutoff` (default 1.0 REU). Such a hit is buying contact with internal strain. |
+
+`plots/interface_vs_total.png` plots the two against each other; the
+bottom-right quadrant is the trap.
+
+**Why `ref` is excluded.** Rosetta's `ref` term is an arbitrary per-amino-acid
+constant used to balance design. It is a one-body term, so it never enters the
+cross-partner sum, and it cancels exactly in a true binding ΔΔG because the same
+residue type exists in the bound and the free state. Including it would make
+`strain` essentially a restatement of Δ`ref`: proline's `ref` is about −5.1 REU,
+so every substitution away from a proline would be flagged as strained when it
+is not. The difference is still reported as `ddg_ref` so nothing is hidden.
 
 ### Reliability — would you bet on it?
 

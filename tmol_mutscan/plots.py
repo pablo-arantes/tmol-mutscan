@@ -334,6 +334,60 @@ def plot_term_decomposition(terms: pd.DataFrame, stats: pd.DataFrame, outdir: Pa
     _save(fig, outdir, "term_decomposition")
 
 
+def plot_interface_vs_total(stats: pd.DataFrame, outdir: Path, *, strain_cutoff: float = 1.0) -> None:
+    """Interface ddG against whole-pose ddG, exposing hidden strain.
+
+    The reported ddG sums cross-partner pairs only, so intramolecular costs are
+    invisible to it. Points far below the diagonal improve the interface while
+    making the molecule worse overall: they are paying rotamer strain or an
+    intra-chain clash to buy interface contact, and should be distrusted.
+    """
+    if "ddg_total_mean" not in stats.columns:
+        return
+    real = stats[~stats.is_wt_self]
+    real = real[np.isfinite(real.ddg_mean) & np.isfinite(real.ddg_total_mean)]
+    if real.empty:
+        return
+
+    flagged = real[real.get("strain_flag", False) == True]  # noqa: E712
+    clean = real.drop(flagged.index)
+
+    fig, ax = plt.subplots(figsize=(6.8, 6.4))
+    limit = float(
+        np.nanpercentile(
+            np.abs(np.concatenate([real.ddg_mean, real.ddg_total_mean])), 99
+        )
+    )
+    limit = max(limit, 1.0)
+    ax.plot([-limit, limit], [-limit, limit], color="0.6", linewidth=0.9, zorder=1,
+            label="interface change = total change")
+    ax.axhline(0.0, color="black", linewidth=0.7)
+    ax.axvline(0.0, color="black", linewidth=0.7)
+    ax.scatter(clean.ddg_mean, clean.ddg_total_mean, s=26, c="#2c7fb8",
+               edgecolor="0.3", linewidth=0.4, zorder=3, label="consistent")
+    if not flagged.empty:
+        ax.scatter(flagged.ddg_mean, flagged.ddg_total_mean, s=52, c="#d7301f",
+                   marker="D", edgecolor="0.2", linewidth=0.5, zorder=4,
+                   label=f"hidden strain > {strain_cutoff:g} REU")
+        for row in flagged.sort_values("ddg_mean").head(12).itertuples():
+            ax.annotate(f"{row.wt_aa}{row.resnum}{row.mut_aa}",
+                        (row.ddg_mean, row.ddg_total_mean), fontsize=7,
+                        xytext=(4, -2), textcoords="offset points")
+
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-limit, limit)
+    ax.set_xlabel("interface ddG (REU) - what the scan reports")
+    ax.set_ylabel("whole-pose ddG (REU) - total score change")
+    ax.set_title(
+        "Does the interface gain survive the whole molecule?\n"
+        "bottom-right quadrant is the trap: interface improves, total worsens"
+    )
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.grid(alpha=0.3)
+    ax.set_axisbelow(True)
+    _save(fig, outdir, "interface_vs_total")
+
+
 def make_all(
     stats: pd.DataFrame,
     summary: pd.DataFrame,
@@ -355,4 +409,5 @@ def make_all(
     plot_position_profile(raw, outdir)
     plot_convergence(conv, outdir)
     plot_position_hotspots(summary, outdir)
+    plot_interface_vs_total(stats, outdir)
     plot_term_decomposition(terms, stats, outdir)

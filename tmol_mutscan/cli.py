@@ -219,6 +219,15 @@ def _add_stats(parser: argparse.ArgumentParser) -> None:
         "(default: -0.5 REU)",
     )
     group.add_argument(
+        "--strain-cutoff",
+        type=float,
+        default=1.0,
+        help="flag an apparently stabilizing substitution when the whole-pose "
+        "score worsens by more than this beyond the interface gain, in REU "
+        "(default: 1.0). The reported ddG counts cross-partner pairs only, so "
+        "rotamer strain and intra-chain clashes are otherwise invisible.",
+    )
+    group.add_argument(
         "--top-n", type=int, default=25, help="substitutions in the top-hits outputs"
     )
     group.add_argument(
@@ -545,7 +554,11 @@ def _scan_and_report(args, log, outdir, structure, ensemble, partner_a, partner_
     write_raw(raw, terms, outdir / "raw")
 
     stats = aggregate(
-        raw, alpha=args.alpha, kt=args.kt, stabilizing_cutoff=args.stabilizing_cutoff
+        raw,
+        alpha=args.alpha,
+        kt=args.kt,
+        stabilizing_cutoff=args.stabilizing_cutoff,
+        strain_cutoff=args.strain_cutoff,
     )
     contributions = wt_interface_contributions(ensemble, sfxn, positions, mask_a, mask_b)
     summary = position_summary(stats, contributions)
@@ -591,14 +604,24 @@ def _print_highlights(stats, summary, conv, outdir: Path) -> None:
     print("10 most favourable substitutions, ranked by mean ddG")
     print("ddG < 0 predicts tighter binding; ddG > 0 predicts weaker binding")
     print("=" * 78)
-    print(f"{'mutation':<16}{'ddG':>8}{'SD':>8}{'95% CI':>18}{'q':>10}  effect")
+    has_strain = "strain_mean" in best.columns
+    header = f"{'mutation':<16}{'ddG':>8}{'SD':>8}{'95% CI':>18}{'q':>10}"
+    print(header + (f"{'strain':>9}" if has_strain else "") + "  effect")
     for row in best.itertuples():
         ci = f"[{row.ci95_low:6.2f},{row.ci95_high:6.2f}]"
         q = "n/a" if pd.isna(row.q_value) else f"{row.q_value:.2e}"
-        print(
+        line = (
             f"{row.wt_aa}{row.resnum}{row.mut_aa} ({row.chain})".ljust(16)
-            + f"{row.ddg_mean:8.2f}{row.ddg_sd:8.2f}{ci:>18}{q:>10}  {row.effect}"
+            + f"{row.ddg_mean:8.2f}{row.ddg_sd:8.2f}{ci:>18}{q:>10}"
         )
+        if has_strain:
+            mark = "!" if getattr(row, "strain_flag", False) else " "
+            line += f"{row.strain_mean:8.2f}{mark}"
+        print(line + f"  {row.effect}")
+    if has_strain and bool(best.get("strain_flag", pd.Series(dtype=bool)).any()):
+        print("\n  ! = interface improves but the whole pose worsens: hidden "
+              "intramolecular strain.")
+        print("      See plots/interface_vs_total.png before trusting these.")
     if not conv.empty:
         final = conv.iloc[-1]
         if len(conv) < 2:
@@ -635,7 +658,11 @@ def cmd_stats(args: argparse.Namespace) -> int:
     log.info("loaded %d rows from %s", len(raw), args.raw)
 
     stats = aggregate(
-        raw, alpha=args.alpha, kt=args.kt, stabilizing_cutoff=args.stabilizing_cutoff
+        raw,
+        alpha=args.alpha,
+        kt=args.kt,
+        stabilizing_cutoff=args.stabilizing_cutoff,
+        strain_cutoff=args.strain_cutoff,
     )
     summary = position_summary(stats)
     log.info(

@@ -20,6 +20,26 @@ without repacking removes exactly the cross-partner terms, which is what
 Work is submitted to TMol in chunks of poses. Within a chunk there is one
 ``pack_rotamers`` call and one scoring call, no matter how many mutations the
 chunk holds, which is where the GPU speedup comes from.
+
+Since v0.2.0 each pose's **whole-pose score** is recorded alongside its
+interface energy. The interface sum contains only cross-partner block pairs, so
+intramolecular costs are invisible to it: a substitution that must adopt a
+strained rotamer, or that clashes within its own chain, can improve the
+interface term while making the molecule worse overall. The difference
+
+    strain = ddg_total - ddg
+
+is that hidden intramolecular component.
+
+The whole-pose total **excludes the ``ref`` term**, and this matters. ``ref`` is
+Rosetta's arbitrary per-amino-acid reference constant used to balance design;
+it is a one-body term, so it never enters the cross-partner sum, and it cancels
+exactly in a binding ddG because the same residue type exists in both the bound
+and the free state. Leaving it in makes ``strain`` a near-perfect proxy for
+``delta ref`` rather than for anything physical -- proline's ``ref`` is about
+-5.1 REU, so every substitution away from proline would be flagged as strained
+when it is not. The ``ref`` difference is still reported, as ``ddg_ref``, so
+nothing is hidden.
 """
 
 from __future__ import annotations
@@ -124,6 +144,34 @@ def build_requests(
     return requests
 
 
+def build_requests_explicit(
+    pairs: list[tuple[Residue, str]], n_conformers: int
+) -> list[Request]:
+    """Enumerate poses for an explicit list of (position, substitution) pairs.
+
+    ``build_requests`` takes the cross product of positions and substitutions,
+    which is what a saturation scan wants. A benchmark against measured data
+    instead has a specific set of substitutions per position, and the cross
+    product would waste most of the work. Each position still gets exactly one
+    wild-type control per conformer, which the ddG pairing requires.
+    """
+    by_block: dict[int, Residue] = {}
+    wanted: list[tuple[int, str]] = []
+    for residue, name3 in pairs:
+        by_block[residue.block] = residue
+        if (residue.block, name3) not in wanted:
+            wanted.append((residue.block, name3))
+
+    requests: list[Request] = []
+    for conformer in range(n_conformers):
+        for block, residue in by_block.items():
+            requests.append(Request(conformer, residue, WT_CONTROL))
+            for other_block, name3 in wanted:
+                if other_block == block:
+                    requests.append(Request(conformer, residue, name3))
+    return requests
+
+
 def auto_batch_size(pose: PoseStack, device: torch.device, budget_bytes: int = 2 << 30) -> int:
     """Poses per chunk that keep the block-pair score tensor near ``budget_bytes``.
 
@@ -172,12 +220,14 @@ def _run_chunk(
     seed: int,
     decompose: bool,
     memory_efficient: bool,
-) -> tuple[np.ndarray, np.ndarray | None, list[str], list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, list[str], list[str]]:
     """Build, pack, optionally minimise and score one chunk of requests.
 
-    Returns the per-request interaction energies, the optional per-term
-    breakdown, the identity each pose actually ended up with, and a parallel
-    list of skip reasons (empty string when the request was honoured).
+    Returns the per-request interface energies, the per-request whole-pose
+    totals excluding ``ref``, the per-request ``ref`` contributions, the
+    optional per-term interface breakdown, the identity each pose actually
+    ended up with, and a parallel list of skip reasons (empty string when the
+    request was honoured).
     """
     log = get_logger()
     device = ensemble.device
@@ -260,12 +310,30 @@ def _run_chunk(
             memory_efficient=memory_efficient,
         )
     energies = per_term.sum(dim=0).detach().cpu().numpy()
+
+    # Whole-pose score, to expose intramolecular costs the cross-partner sum
+    # cannot see. A new scorer is rendered because packing changes the atom
+    # layout. The `ref` term is split out rather than summed in: see the module
+    # docstring for why including it would make `strain` meaningless.
+    with torch.no_grad():
+        total_scorer = sfxn.render_whole_pose_scoring_module(packed)
+        per_pose_terms = total_scorer(packed.coords, sum_terms=False).detach()
+    term_names = [st.name for st in sfxn.all_score_types()]
+    ref_row = term_names.index("ref") if "ref" in term_names else None
+    if ref_row is None:
+        totals = per_pose_terms.sum(dim=0).cpu().numpy()
+        refs = np.zeros_like(totals)
+    else:
+        keep = [i for i in range(per_pose_terms.shape[0]) if i != ref_row]
+        totals = per_pose_terms[keep].sum(dim=0).cpu().numpy()
+        refs = per_pose_terms[ref_row].cpu().numpy()
+
     t_score = time.perf_counter() - t0
     log.debug("  chunk pack %.2fs, score %.2fs", t_pack, t_score)
 
     achieved = [packed.block_type(i, chunk[i].residue.block).name3 for i in range(n)]
     terms = per_term.detach().cpu().numpy() if decompose else None
-    return energies, terms, achieved, skip_reason
+    return energies, totals, refs, terms, achieved, skip_reason
 
 
 def run_scan(
@@ -282,8 +350,14 @@ def run_scan(
     seed: int = 0,
     batch_size: int = 0,
     decompose: bool = False,
+    explicit_pairs: list[tuple[Residue, str]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    """Run the full ensemble x position x substitution scan.
+    """Run the ensemble scan.
+
+    By default every position is tried against every substitution. Passing
+    ``explicit_pairs`` instead scans only those (position, substitution)
+    combinations, which is what a benchmark against measured values needs;
+    ``positions`` and ``mutations`` are then used only for reporting.
 
     Returns the tidy per-conformer table and, when ``decompose`` is set, a
     second table of per-score-term ddG contributions.
@@ -292,19 +366,31 @@ def run_scan(
     device = ensemble.device
     n_conformers = ensemble.n_poses
 
-    requests = build_requests(positions, mutations, n_conformers)
+    if explicit_pairs is not None:
+        requests = build_requests_explicit(explicit_pairs, n_conformers)
+    else:
+        requests = build_requests(positions, mutations, n_conformers)
     chunk_size = batch_size or auto_batch_size(ensemble, device)
     memory_efficient = ensemble.max_n_blocks > 400
     n_chunks = (len(requests) + chunk_size - 1) // chunk_size
 
-    log.info(
-        "scan: %d conformers x %d positions x (%d substitutions + 1 WT control) "
-        "= %d poses",
-        n_conformers,
-        len(positions),
-        len(mutations),
-        len(requests),
-    )
+    if explicit_pairs is not None:
+        log.info(
+            "scan: %d conformers x %d explicit (position, substitution) pairs "
+            "+ WT controls = %d poses",
+            n_conformers,
+            len({(r.residue.block, r.name3) for r in requests if not r.is_control}),
+            len(requests),
+        )
+    else:
+        log.info(
+            "scan: %d conformers x %d positions x (%d substitutions + 1 WT control) "
+            "= %d poses",
+            n_conformers,
+            len(positions),
+            len(mutations),
+            len(requests),
+        )
     log.info("  %d chunks of up to %d poses each", n_chunks, chunk_size)
     if minimize:
         log.info("  Cartesian minimisation of the mutated shell is ON")
@@ -317,6 +403,8 @@ def run_scan(
 
     term_names = [st.name for st in sfxn.all_score_types()]
     energies = np.full(len(requests), np.nan)
+    totals = np.full(len(requests), np.nan)
+    refs = np.full(len(requests), np.nan)
     achieved: list[str] = [""] * len(requests)
     skipped: list[str] = [""] * len(requests)
     term_rows: list[np.ndarray] = []
@@ -326,7 +414,14 @@ def run_scan(
         lo = index * chunk_size
         hi = min(lo + chunk_size, len(requests))
         chunk = requests[lo:hi]
-        chunk_energies, chunk_terms, chunk_achieved, chunk_skip = _run_chunk(
+        (
+            chunk_energies,
+            chunk_totals,
+            chunk_refs,
+            chunk_terms,
+            chunk_achieved,
+            chunk_skip,
+        ) = _run_chunk(
             ensemble,
             chunk,
             sfxn,
@@ -340,6 +435,8 @@ def run_scan(
             memory_efficient=memory_efficient,
         )
         energies[lo:hi] = chunk_energies
+        totals[lo:hi] = chunk_totals
+        refs[lo:hi] = chunk_refs
         achieved[lo:hi] = chunk_achieved
         skipped[lo:hi] = chunk_skip
         if chunk_terms is not None:
@@ -375,6 +472,16 @@ def run_scan(
         for i, r in enumerate(requests)
         if r.is_control
     }
+    control_total = {
+        (r.conformer, r.residue.block): totals[i]
+        for i, r in enumerate(requests)
+        if r.is_control
+    }
+    control_ref = {
+        (r.conformer, r.residue.block): refs[i]
+        for i, r in enumerate(requests)
+        if r.is_control
+    }
 
     rows = []
     for i, request in enumerate(requests):
@@ -383,6 +490,9 @@ def run_scan(
         residue = request.residue
         e_wt = control[(request.conformer, residue.block)]
         e_mut = energies[i]
+        total_wt = control_total[(request.conformer, residue.block)]
+        total_mut = totals[i]
+        ref_wt = control_ref[(request.conformer, residue.block)]
         mutant_letter = three2one(request.name3) or "X"
         ratio = e_mut / e_wt if e_wt not in (0.0,) and np.isfinite(e_wt) else np.nan
         rows.append(
@@ -399,6 +509,15 @@ def run_scan(
                 "e_wt": e_wt,
                 "e_mut": e_mut,
                 "ddg": e_mut - e_wt,
+                "total_wt": total_wt,
+                "total_mut": total_mut,
+                "ddg_total": total_mut - total_wt,
+                # Rosetta's arbitrary per-residue constant, reported separately
+                # because it is excluded from total_* above.
+                "ddg_ref": refs[i] - ref_wt,
+                # The part of the whole-pose change that is NOT cross-partner:
+                # rotamer strain and intra-chain contacts, ref excluded.
+                "strain": (total_mut - total_wt) - (e_mut - e_wt),
                 "ratio": ratio,
                 "percentage": (e_mut - e_wt) / e_wt
                 if e_wt not in (0.0,) and np.isfinite(e_wt)

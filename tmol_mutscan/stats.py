@@ -83,7 +83,8 @@ def normalize_raw(raw: pd.DataFrame) -> pd.DataFrame:
             # filling a float column with a string is an error in pandas 4.
             raw[column] = raw[column].astype(object).where(raw[column].notna(), "")
             raw[column] = raw[column].astype(str)
-    for column in ("ddg", "e_wt", "e_mut", "ratio", "percentage", "conformer"):
+    for column in ("ddg", "e_wt", "e_mut", "ratio", "percentage", "conformer",
+                   "total_wt", "total_mut", "ddg_total", "ddg_ref", "strain"):
         if column in raw.columns:
             raw[column] = pd.to_numeric(raw[column], errors="coerce")
     return raw
@@ -127,6 +128,7 @@ def aggregate(
     alpha: float = 0.05,
     kt: float = DEFAULT_KT,
     stabilizing_cutoff: float = -0.5,
+    strain_cutoff: float = 1.0,
 ) -> pd.DataFrame:
     """Collapse the per-conformer table into per-substitution statistics.
 
@@ -136,6 +138,8 @@ def aggregate(
         kt: kT used for the Boltzmann average, in REU.
         stabilizing_cutoff: ddG below which a significant substitution is
             called stabilizing, in REU.
+        strain_cutoff: ``strain_mean`` above which an apparently stabilizing
+            substitution is flagged as paying hidden intramolecular cost.
     """
     log = get_logger()
     usable = usable_rows(raw)
@@ -186,6 +190,22 @@ def aggregate(
             e_mut_sd=float(np.std(group.e_mut, ddof=1)) if n > 1 else float("nan"),
             ratio_mean=float(np.nanmean(group.ratio)),
             percentage_mean=float(np.nanmean(group.percentage)),
+            # v0.2.0: whole-pose change and its non-interface component.
+            ddg_total_mean=float(np.nanmean(group.ddg_total))
+            if "ddg_total" in group
+            else float("nan"),
+            ddg_total_sd=float(np.nanstd(group.ddg_total, ddof=1))
+            if "ddg_total" in group and n > 1
+            else float("nan"),
+            strain_mean=float(np.nanmean(group.strain))
+            if "strain" in group
+            else float("nan"),
+            strain_sd=float(np.nanstd(group.strain, ddof=1))
+            if "strain" in group and n > 1
+            else float("nan"),
+            ddg_ref_mean=float(np.nanmean(group.ddg_ref))
+            if "ddg_ref" in group
+            else float("nan"),
             is_wt_self=bool(key[keys.index("mut_name3")] == key[keys.index("wt_name3")]),
         )
         records.append(record)
@@ -207,9 +227,24 @@ def aggregate(
     )
     stats.loc[stats.is_wt_self, "effect"] = "wild-type"
 
+    # A candidate that improves the interface while straining the molecule is
+    # buying contacts with internal cost that the interface sum cannot see.
+    stats["strain_flag"] = (
+        (stats.ddg_mean < 0) & (stats.strain_mean > strain_cutoff)
+    ).fillna(False)
+
     stats = stats.sort_values(["chain", "resnum", "icode", "ddg_mean"]).reset_index(drop=True)
     stats.insert(0, "rank", stats.ddg_mean.rank(method="min").astype("Int64"))
 
+    n_flagged = int((stats.strain_flag & ~stats.is_wt_self).sum())
+    if n_flagged:
+        log.warning(
+            "%d apparently stabilizing substitution(s) carry intramolecular strain "
+            "above %.2f REU; see the strain_mean column and "
+            "plots/interface_vs_total.png",
+            n_flagged,
+            strain_cutoff,
+        )
     n_sig = int(stats.significant.sum())
     log.info(
         "statistics: %d substitutions, %d significant at FDR %.3g "
