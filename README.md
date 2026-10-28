@@ -699,6 +699,12 @@ the spread, not a single pack.
 - **The input matters more than anything here.** A scan of a poorly resolved
   or badly modelled interface produces confident-looking numbers about
   nothing. Check `ensemble_scores.csv` and the input structure first.
+- **Accuracy against experiment is not established here.** The 1YCR check
+  confirms the plumbing — selections, pairing, energy decomposition — by
+  recovering known hotspots, which is a low bar that buried-surface area alone
+  would clear. To put a number on predictive accuracy, run the
+  [SKEMPI benchmark notebook](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_skempi_benchmark.ipynb), which correlates predictions
+  against measured ΔΔG.
 - Insertion codes are supported, but alternate locations are not handled
   specially — the first is taken.
 
