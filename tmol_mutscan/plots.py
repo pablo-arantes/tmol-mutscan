@@ -97,14 +97,37 @@ def _symmetric_norm(data: np.ndarray, clip_percentile: float = 98.0) -> TwoSlope
     return TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
 
 
-def plot_ddg_heatmap(mats: dict[str, pd.DataFrame], outdir: Path, *, annotate: bool = False) -> None:
-    """Mean ddG, with a symmetric diverging scale clipped at the 98th percentile."""
+def plot_ddg_heatmap(
+    mats: dict[str, pd.DataFrame],
+    outdir: Path,
+    *,
+    annotate: bool = False,
+    stats: pd.DataFrame | None = None,
+) -> None:
+    """Mean ddG, with a symmetric diverging scale clipped at the 98th percentile.
+
+    Since v0.3.0 strain-flagged cells are blanked rather than drawn. On the
+    SKEMPI benchmark those predictions were anti-predictive -- Pearson r of
+    -0.09 with the sign wrong 84% of the time -- so showing them is worse than
+    showing nothing. They remain in the CSV outputs.
+    """
     table = mats["ddg_mean"]
+    n_blanked = 0
+    if stats is not None and "trust" in stats.columns:
+        table = table.copy()
+        excluded = stats[(stats.trust == "none") & ~stats.is_wt_self]
+        for row in excluded.itertuples():
+            label = f"{row.position} ({row.wt_aa})"
+            if label in table.index and row.mut_aa in table.columns:
+                table.loc[label, row.mut_aa] = np.nan
+                n_blanked += 1
     norm = _symmetric_norm(table.to_numpy(dtype=float))
+    subtitle = "blue = stabilizing (ddG < 0), red = destabilizing"
+    if n_blanked:
+        subtitle += f"\ngrey = {n_blanked} strain-flagged cell(s) withheld as unreliable"
     fig = _heatmap(
         table,
-        "Mean interface ddG across the conformational ensemble\n"
-        "blue = stabilizing (ddG < 0), red = destabilizing",
+        "Mean interface ddG across the conformational ensemble\n" + subtitle,
         "ddG (REU)",
         cmap="RdBu_r",
         norm=norm,
@@ -388,6 +411,45 @@ def plot_interface_vs_total(stats: pd.DataFrame, outdir: Path, *, strain_cutoff:
     _save(fig, outdir, "interface_vs_total")
 
 
+def plot_trust_heatmap(stats: pd.DataFrame, mats: dict[str, pd.DataFrame], outdir: Path) -> None:
+    """Mean ddG shown only where the benchmark says the prediction is reliable.
+
+    High trust means a core position with an effect of at least the trust
+    cutoff and no strain flag: on the SKEMPI benchmark that regime reached
+    Pearson r = 0.59 with the sign right 95% of the time, against r = 0.22
+    and 70% elsewhere.
+    """
+    if stats is None or "trust" not in stats.columns:
+        return
+    table = mats["ddg_mean"].copy()
+    keep = {
+        (f"{r.position} ({r.wt_aa})", r.mut_aa)
+        for r in stats[(stats.trust == "high") & ~stats.is_wt_self].itertuples()
+    }
+    if not keep:
+        get_logger().info(
+            "no high-trust predictions, so the trust heatmap is skipped "
+            "(needs a core position with |ddG| above the trust cutoff)"
+        )
+        return
+    for label in table.index:
+        for column in table.columns:
+            if (label, column) not in keep:
+                table.loc[label, column] = np.nan
+    fig = _heatmap(
+        table,
+        f"High-trust predictions only ({len(keep)} of "
+        f"{int((~stats.is_wt_self).sum())})\n"
+        "core position, effect above the trust cutoff, no strain flag\n"
+        "benchmark: r = 0.59, sign correct 95% of the time in this regime",
+        "ddG (REU)",
+        cmap="RdBu_r",
+        norm=_symmetric_norm(mats["ddg_mean"].to_numpy(dtype=float)),
+        annotate=True,
+    )
+    _save(fig, outdir, "ddg_high_trust_heatmap")
+
+
 def make_all(
     stats: pd.DataFrame,
     summary: pd.DataFrame,
@@ -402,7 +464,8 @@ def make_all(
     top_n: int = 25,
 ) -> None:
     """Produce every figure into ``outdir``."""
-    plot_ddg_heatmap(mats, outdir, annotate=annotate)
+    plot_ddg_heatmap(mats, outdir, annotate=annotate, stats=stats)
+    plot_trust_heatmap(stats, mats, outdir)
     plot_sd_heatmap(mats, outdir)
     plot_significant_heatmap(mats, outdir, alpha=alpha)
     plot_top_mutations(stats, outdir, top_n=top_n)

@@ -228,6 +228,22 @@ def _add_stats(parser: argparse.ArgumentParser) -> None:
         "rotamer strain and intra-chain clashes are otherwise invisible.",
     )
     group.add_argument(
+        "--trust-ddg-cutoff",
+        type=float,
+        default=2.0,
+        help="minimum |ddG| in REU for a core-position prediction to be marked "
+        "high trust (default: 2.0). From the SKEMPI benchmark, that regime "
+        "reached r=0.59 with the sign right 95%% of the time, against r=0.22 "
+        "elsewhere. Cutoffs from 1.5 to 3.0 performed equivalently.",
+    )
+    group.add_argument(
+        "--no-burial",
+        action="store_true",
+        help="skip the interface burial classification. It needs a SASA "
+        "calculation (a few seconds); without it no prediction can reach high "
+        "trust, since the rule needs a core/rim label.",
+    )
+    group.add_argument(
         "--top-n", type=int, default=25, help="substitutions in the top-hits outputs"
     )
     group.add_argument(
@@ -507,6 +523,9 @@ def _scan_and_report(args, log, outdir, structure, ensemble, partner_a, partner_
         wt_interface_contributions,
     )
 
+    from .structure import residue_table
+
+    _print_expected_accuracy(len(residue_table(structure.pose)), log)
     positions = _resolve_positions(structure, args, partner_a, partner_b, log)
     mutations = parse_mutations(args.mutations)
     log.info("substitutions (%d): %s", len(mutations), " ".join(mutations))
@@ -553,12 +572,21 @@ def _scan_and_report(args, log, outdir, structure, ensemble, partner_a, partner_
     )
     write_raw(raw, terms, outdir / "raw")
 
+    locations = None
+    if not args.no_burial:
+        from .interface import classify_interface
+
+        by_block = classify_interface(structure.pose, partner_a, partner_b)
+        locations = {res.label: by_block.get(res.block, "?") for res in positions}
+
     stats = aggregate(
         raw,
         alpha=args.alpha,
         kt=args.kt,
         stabilizing_cutoff=args.stabilizing_cutoff,
         strain_cutoff=args.strain_cutoff,
+        locations=locations,
+        trust_cutoff=args.trust_ddg_cutoff,
     )
     contributions = wt_interface_contributions(ensemble, sfxn, positions, mask_a, mask_b)
     summary = position_summary(stats, contributions)
@@ -596,6 +624,23 @@ def _scan_and_report(args, log, outdir, structure, ensemble, partner_a, partner_
     return 0
 
 
+def _print_expected_accuracy(n_residues: int, log) -> None:
+    """State up front what the benchmark says to expect for a complex this size."""
+    from .interface import expected_accuracy
+
+    log.info(
+        "complex has %d residues; on the SKEMPI 2.0 benchmark, complexes of "
+        "this size reached %s against measured ddG",
+        n_residues,
+        expected_accuracy(n_residues),
+    )
+    if n_residues >= 700:
+        log.warning(
+            "accuracy falls off for large complexes (r ~ 0.32 above 700 "
+            "residues, against ~0.68 below 300). Treat the ranking as weak."
+        )
+
+
 def _print_highlights(stats, summary, conv, outdir: Path) -> None:
     """Short human-readable wrap-up on stdout."""
     real = stats[~stats.is_wt_self]
@@ -605,8 +650,10 @@ def _print_highlights(stats, summary, conv, outdir: Path) -> None:
     print("ddG < 0 predicts tighter binding; ddG > 0 predicts weaker binding")
     print("=" * 78)
     has_strain = "strain_mean" in best.columns
+    has_trust = "trust" in best.columns
     header = f"{'mutation':<16}{'ddG':>8}{'SD':>8}{'95% CI':>18}{'q':>10}"
-    print(header + (f"{'strain':>9}" if has_strain else "") + "  effect")
+    print(header + (f"{'strain':>9}" if has_strain else "")
+          + (f"{'where':>9}{'trust':>7}" if has_trust else "") + "  effect")
     for row in best.itertuples():
         ci = f"[{row.ci95_low:6.2f},{row.ci95_high:6.2f}]"
         q = "n/a" if pd.isna(row.q_value) else f"{row.q_value:.2e}"
@@ -617,11 +664,25 @@ def _print_highlights(stats, summary, conv, outdir: Path) -> None:
         if has_strain:
             mark = "!" if getattr(row, "strain_flag", False) else " "
             line += f"{row.strain_mean:8.2f}{mark}"
+        if has_trust:
+            line += f"{str(row.location)[:8]:>9}{row.trust:>7}"
         print(line + f"  {row.effect}")
     if has_strain and bool(best.get("strain_flag", pd.Series(dtype=bool)).any()):
         print("\n  ! = interface improves but the whole pose worsens: hidden "
               "intramolecular strain.")
         print("      See plots/interface_vs_total.png before trusting these.")
+    if has_trust:
+        real = stats[~stats.is_wt_self]
+        print(f"\n  trust (SKEMPI-benchmark rule): "
+              f"{int((real.trust=='high').sum())} high, "
+              f"{int((real.trust=='low').sum())} low, "
+              f"{int((real.trust=='none').sum())} none")
+        print("      high = core position, |ddG| above the cutoff, no strain flag")
+        print("             benchmark r=0.59, sign correct 95% of the time")
+        print("      low  = benchmark r=0.22, sign correct 70%; do not rank on it")
+        print("      none = strain-flagged; anti-predictive (sign wrong 84%)")
+        print("      Benchmarked on protein-protein complexes only; a flexible")
+        print("      peptide that is disordered when free is a harder case.")
     if not conv.empty:
         final = conv.iloc[-1]
         if len(conv) < 2:
@@ -663,6 +724,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
         kt=args.kt,
         stabilizing_cutoff=args.stabilizing_cutoff,
         strain_cutoff=args.strain_cutoff,
+        trust_cutoff=args.trust_ddg_cutoff,
     )
     summary = position_summary(stats)
     log.info(
@@ -799,7 +861,8 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("-o", "--outdir", default="mutscan_out", metavar="DIR")
     _add_stats(stats)
     stats.add_argument("-v", "--verbose", action="count", default=0)
-    stats.set_defaults(func=cmd_stats)
+    # Burial needs the structure, which this subcommand does not load.
+    stats.set_defaults(func=cmd_stats, no_burial=True)
 
     return parser
 

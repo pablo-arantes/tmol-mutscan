@@ -56,6 +56,7 @@ from scipy import stats as sps
 from tmol.pose import PoseStack
 from tmol.score import ScoreFunction
 
+from .interface import assign_trust
 from .logging_utils import get_logger
 from .structure import Residue
 
@@ -129,6 +130,8 @@ def aggregate(
     kt: float = DEFAULT_KT,
     stabilizing_cutoff: float = -0.5,
     strain_cutoff: float = 1.0,
+    locations: dict[str, str] | None = None,
+    trust_cutoff: float = 2.0,
 ) -> pd.DataFrame:
     """Collapse the per-conformer table into per-substitution statistics.
 
@@ -140,6 +143,10 @@ def aggregate(
             called stabilizing, in REU.
         strain_cutoff: ``strain_mean`` above which an apparently stabilizing
             substitution is flagged as paying hidden intramolecular cost.
+        locations: Optional map from position label to interface burial class
+            (``core``/``support``/``rim``/...), used by the trust rule.
+        trust_cutoff: Minimum \|ddG\| in REU for a core prediction to be
+            trusted, in REU.
     """
     log = get_logger()
     usable = usable_rows(raw)
@@ -233,6 +240,16 @@ def aggregate(
         (stats.ddg_mean < 0) & (stats.strain_mean > strain_cutoff)
     ).fillna(False)
 
+    # v0.3.0: burial class and the benchmark-validated trust level.
+    stats["location"] = (
+        stats.position.map(locations).fillna("?") if locations else "?"
+    )
+    stats["trust"] = [
+        assign_trust(loc, ddg, bool(flagged), cutoff=trust_cutoff)
+        for loc, ddg, flagged in zip(stats.location, stats.ddg_mean, stats.strain_flag)
+    ]
+    stats.loc[stats.is_wt_self, "trust"] = "n/a"
+
     stats = stats.sort_values(["chain", "resnum", "icode", "ddg_mean"]).reset_index(drop=True)
     stats.insert(0, "rank", stats.ddg_mean.rank(method="min").astype("Int64"))
 
@@ -244,6 +261,18 @@ def aggregate(
             "plots/interface_vs_total.png",
             n_flagged,
             strain_cutoff,
+        )
+    real = stats[~stats.is_wt_self]
+    log.info(
+        "trust levels (from the SKEMPI benchmark rule): %d high, %d low, %d none",
+        int((real.trust == "high").sum()),
+        int((real.trust == "low").sum()),
+        int((real.trust == "none").sum()),
+    )
+    if locations is None:
+        log.warning(
+            "no burial classification available, so no prediction can reach "
+            "'high' trust; the rule needs a core/rim label"
         )
     n_sig = int(stats.significant.sum())
     log.info(
@@ -287,6 +316,10 @@ def position_summary(stats: pd.DataFrame, contributions: pd.DataFrame | None = N
                 "stabilizing_substitutions": "".join(
                     stabilizing.sort_values("ddg_mean").mut_aa.tolist()
                 ),
+                "location": group.location.iloc[0] if "location" in group else "?",
+                "n_high_trust": int((group.trust == "high").sum())
+                if "trust" in group
+                else 0,
             }
         )
     summary = pd.DataFrame(rows)

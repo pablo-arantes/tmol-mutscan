@@ -33,6 +33,7 @@ scoring call.
 - [Inputs](#inputs)
 - [Outputs](#outputs)
 - [Understanding the statistics](#understanding-the-statistics)
+- [How accurate is it? (benchmark results)](#how-accurate-is-it-benchmark-results)
 - [What changed from the PyRosetta version](#what-changed-from-the-pyrosetta-version)
 - [Performance and tuning](#performance-and-tuning)
 - [Reproducibility](#reproducibility)
@@ -392,7 +393,8 @@ results/
 │   └── qvalue.csv   frac_stabilizing.csv  cohens_dz.csv
 │
 └── plots/                         PNG (300 dpi) and PDF
-    ├── ddg_mean_heatmap.png       headline figure: diverging, centred on zero
+    ├── ddg_mean_heatmap.png       headline figure (strain-flagged cells blanked)
+    ├── ddg_high_trust_heatmap.png only the predictions benchmarking says to trust
     ├── ddg_sd_heatmap.png         where the ensemble disagrees
     ├── ddg_significant_heatmap.png  mean ΔΔG, non-significant cells greyed out
     ├── top_mutations.png          ranked hits with 95% CI error bars
@@ -422,6 +424,9 @@ The primary data; everything else is derived from it. One row per
 | `ddg_total` | `total_mut − total_wt`: the change to the whole molecule, not just the interface. |
 | `strain` | `ddg_total − ddg`: the part of the change that is *not* cross-partner — rotamer strain and intra-chain contacts. |
 | `ddg_ref` | Change in Rosetta's per-residue `ref` constant, reported for transparency and excluded from the totals (see below). |
+
+`stats/ddg_statistics.csv` adds `location` and `trust` (v0.3.0) — read those
+first; see [benchmark results](#how-accurate-is-it-benchmark-results).
 | `achieved_name3` | What the packer actually built (a cross-check on `mut_name3`). |
 | `skipped` | Empty when the request was honoured, otherwise why it was not. |
 
@@ -493,6 +498,20 @@ residue type exists in the bound and the free state. Including it would make
 `strain` essentially a restatement of Δ`ref`: proline's `ref` is about −5.1 REU,
 so every substitution away from a proline would be flagged as strained when it
 is not. The difference is still reported as `ddg_ref` so nothing is hidden.
+
+### Trust level (v0.3.0)
+
+| Column | Meaning |
+|---|---|
+| `location` | Interface burial class: `core`, `support`, `rim`, `interior`, `surface` (Levy 2010 rASA). |
+| `trust` | `high`, `low` or `none`, from the rule validated on SKEMPI 2.0 — see [benchmark results](#how-accurate-is-it-benchmark-results). |
+| `n_high_trust` | Per position, in `position_summary.csv`. |
+
+**Read `trust` before `ddg_mean`.** `none` means the prediction was
+anti-predictive in benchmarking and should be discarded; `low` means
+directionally weak and not worth ranking on. Only `high` reached r ≈ 0.59 with
+95% sign agreement. `--trust-ddg-cutoff` sets the effect-size threshold and
+`--no-burial` skips the SASA step (no prediction can then reach `high`).
 
 ### Reliability — would you bet on it?
 
@@ -568,6 +587,115 @@ curve still falling at *k = n* means **increase `-n`**. The last row has zero
 drift by construction, so the run summary quotes the second-to-last point.
 
 ---
+
+## How accurate is it? (benchmark results)
+
+Measured against **SKEMPI 2.0**: 496 single-point interface mutations across 42
+protein–protein complexes with experimental binding ΔΔG, scored with this
+pipeline on a Colab T4. Reproduce or extend it with the
+[benchmark notebook](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_skempi_benchmark.ipynb).
+
+### Overall
+
+| | value |
+|---|---|
+| Pearson r | **0.53** (n = 496, p = 3e-37) |
+| Spearman ρ | **0.39** |
+| Sign agreement | 0.78 |
+| Empirical scale | **1 kcal/mol ≈ 2.3 REU** (fitted slope 0.35) |
+
+**Two things that number hides.** First, it is carried by extreme mutations: at
+|ΔΔG| ≤ 3 kcal/mol — 433 of the 496 points, and where essentially all design
+decisions live — r falls to **0.25**, about 6% of variance. Second, accuracy
+depends strongly on system size:
+
+| complex size | n | Pearson r | median within-complex ρ |
+|---|---:|---:|---:|
+| < 300 residues | 108 | **0.68** | **+0.55** |
+| 300–450 | 129 | 0.50 | |
+| 450–700 | 131 | 0.49 | **+0.33** |
+| > 700 residues | 128 | **0.32** | |
+
+Each run prints the band for your complex.
+
+### Where the signal is
+
+| | n | r | ρ | sign |
+|---|---:|---:|---:|---:|
+| interface **core** | 265 | **0.57** | 0.45 | 0.83 |
+| core, \|ΔΔG\| > 1 kcal/mol | 149 | **0.59** | 0.52 | 0.87 |
+| support | 82 | 0.37 | 0.25 | 0.77 |
+| rim | 149 | 0.30 | 0.22 | 0.67 |
+| **stabilizing (ΔΔG_exp < 0)** | 103 | **0.14** [-0.06, +0.32] | **0.01** | 0.40 |
+
+**It cannot rank improvements.** On experimentally stabilizing mutations
+Spearman ρ = 0.011 (p = 0.91), and the 95% CI on r tops out at 0.32, so even
+moderate correlation is excluded. This is the method's central limitation and
+it is exactly where peptide optimisation needs help. Used as a *filter* rather
+than a ranking it still enriches: predictions below −1 REU at a core position
+with no strain flag were 67% truly stabilizing against a 21% base rate
+(3.2×) — but that was only 6 candidates out of 496, so recall is poor and the
+rate is loosely determined.
+
+### The trust rule (v0.3.0)
+
+| regime | n | r | ρ | sign |
+|---|---:|---:|---:|---:|
+| `trust = high` — core, \|ΔΔG\| ≥ cutoff, unflagged | 140 (28%) | **0.59** | 0.45 | **0.95** |
+| `trust = low` — everything else | 356 | 0.22 | 0.19 | 0.70 |
+| `trust = none` — strain-flagged | 54 | **−0.09** | −0.14 | **0.16** |
+
+Strain-flagged predictions are **anti-predictive**: the sign is wrong 84% of
+the time. v0.3.0 therefore blanks them in `ddg_mean_heatmap.png` rather than
+drawing them (they stay in the CSVs). Excluding them lifts the overall r from
+0.530 to 0.563.
+
+The `location` label is computed here with a Levy (2010) rASA classification —
+the same scheme SKEMPI annotates — and agrees with SKEMPI's labels on 88% of
+the benchmark mutations, reproducing the rule's discrimination to within noise.
+
+### Two findings that change how you run it
+
+**More sampling does not help.** Raising `--relax-repeats` from 1 to 4 on the
+same 178 mutations moved r from 0.647 to 0.652 — noise — at four times the
+cost. Ensemble noise is 0.5% of prediction variance. **The error is in the
+energy function, not the sampling**, so keep `--relax-repeats` at 1–2 and
+spend the compute on more positions or conformers for error bars instead.
+(Predictions from the two runs agreed at r = 0.985 despite a different seed,
+which is a useful reproducibility result in itself.)
+
+**Large hydrophobic substitutions are over-rewarded.** Substitutions that are
+both bulkier by >30 Å³ and hydrophobic were optimistic by **0.76 kcal/mol on
+average** (n = 28, p = 0.014); 19 were predicted stabilizing and only 6 were.
+Discount them, even at high trust.
+
+### What the benchmark does not cover
+
+- **Protein–protein only.** A peptide that is disordered when free is a harder
+  case, because the mutation also changes the free-state ensemble, which this
+  method does not model. Treat every number above as an **upper bound** for
+  peptide–protein work.
+- **Nothing about protein–ligand.**
+- Complexes with glycans attached in-chain or modified residues (CGU, IAS) are
+  excluded; two failed to load.
+- Experimental replicates agree to ~0.3 kcal/mol against a 1.9 kcal/mol spread,
+  so experimental noise caps attainable r near 0.99 and is not the limit.
+
+### Summary: where to trust it
+
+| Use | Verdict |
+|---|---|
+| Hotspots at core positions, large effects | **Trust it** — r ≈ 0.6, sign right 95% |
+| Which positions to leave alone | **Trust it** |
+| Mutations that destroy binding | **Fairly robust** |
+| Ranking candidate improvements | **No** — ρ = 0.01, ruled out |
+| Enriching a shortlist to test | **Marginal** — ~3× with filters, low recall |
+| Anything strain-flagged | **Discard** — anti-predictive |
+| Rim/support positions, small effects | **Weak** — do not rank on it |
+| Complexes > 700 residues | **Weak** — r ≈ 0.32 |
+
+**Good enough to tell you what not to change; not good enough to tell you what
+to change.**
 
 ## What changed from the PyRosetta version
 
@@ -699,12 +827,11 @@ the spread, not a single pack.
 - **The input matters more than anything here.** A scan of a poorly resolved
   or badly modelled interface produces confident-looking numbers about
   nothing. Check `ensemble_scores.csv` and the input structure first.
-- **Accuracy against experiment is not established here.** The 1YCR check
-  confirms the plumbing — selections, pairing, energy decomposition — by
-  recovering known hotspots, which is a low bar that buried-surface area alone
-  would clear. To put a number on predictive accuracy, run the
-  [SKEMPI benchmark notebook](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_skempi_benchmark.ipynb), which correlates predictions
-  against measured ΔΔG.
+- **Accuracy is measured, and it is uneven.** See
+  [benchmark results](#how-accurate-is-it-benchmark-results): r ≈ 0.53 overall
+  against SKEMPI 2.0, but ≈ 0.25 for effects under 3 kcal/mol, and **no usable
+  signal at all for stabilizing mutations**. Check the `trust` column before
+  acting on any prediction.
 - Insertion codes are supported, but alternate locations are not handled
   specially — the first is taken.
 
