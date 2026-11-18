@@ -24,6 +24,43 @@ from .logging_utils import get_logger
 
 DPI = 300
 
+#: Readable labels for TMol's score-term code identifiers, condensed from
+#: Table S1 of the TMol paper (arXiv:2611.21857). Used on the decomposition
+#: figure, where `fa_ljatr` tells a non-Rosetta reader nothing.
+TERM_LABELS = {
+    "fa_ljatr": "LJ attraction",
+    "fa_ljrep": "LJ repulsion",
+    "fa_lk": "LK solvation",
+    "fa_elec": "electrostatics",
+    "hbond": "H bonding",
+    "lk_ball": "directional hydration",
+    "lk_ball_iso": "isotropic hydration",
+    "lk_bridge": "water bridge",
+    "lk_bridge_uncpl": "water bridge (uncoupled)",
+    "rama": "Ramachandran",
+    "omega": "omega torsion",
+    "dunbrack_rot": "Dunbrack rotamer prob.",
+    "dunbrack_rotdev": "Dunbrack deviation",
+    "dunbrack_semirot": "Dunbrack semi-rotameric",
+    "ref": "reference energy",
+    "disulfide": "disulfide geometry",
+    "cart_lengths": "bond lengths",
+    "cart_angles": "bond angles",
+    "cart_torsions": "bond torsions",
+    "cart_impropers": "improper torsions",
+    "cart_hxltorsions": "hydroxyl torsions",
+    "gen_torsions": "generic bonded",
+    "na_torsion": "nucleic-acid torsions",
+    "na_torsion_well": "nucleic-acid wells",
+    "metal_coordination": "metal coordination",
+    "constraint": "constraints",
+}
+
+
+def term_label(identifier: str) -> str:
+    """Readable name for a score term, falling back to its code identifier."""
+    return TERM_LABELS.get(identifier, identifier)
+
 
 def _save(fig, outdir: Path, stem: str, also_pdf: bool = True) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
@@ -339,7 +376,7 @@ def plot_term_decomposition(terms: pd.DataFrame, stats: pd.DataFrame, outdir: Pa
     grouped = grouped.reindex(sorted(grouped.index, key=lambda k: lookup.get(k, 0.0)))
     labels = [f"{p} {m}" for p, m in grouped.index]
     grouped.index = labels
-    grouped.columns = [c.removeprefix("ddg_") for c in grouped.columns]
+    grouped.columns = [term_label(c.removeprefix("ddg_")) for c in grouped.columns]
 
     norm = _symmetric_norm(grouped.to_numpy(dtype=float))
     fig = _heatmap(
@@ -353,7 +390,10 @@ def plot_term_decomposition(terms: pd.DataFrame, stats: pd.DataFrame, outdir: Pa
         fmt="{:.2f}",
     )
     fig.axes[0].set_ylabel("position and substitution")
-    fig.axes[0].set_xlabel("score term")
+    fig.axes[0].set_xlabel("score term (TMol paper Table S1 naming)")
+    fig.axes[0].tick_params(axis="x", labelrotation=35)
+    for tick in fig.axes[0].get_xticklabels():
+        tick.set_horizontalalignment("right")
     _save(fig, outdir, "term_decomposition")
 
 

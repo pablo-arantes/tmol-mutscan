@@ -1,6 +1,6 @@
 # tmol-mutscan
 
-**Ensemble-based interface mutational scanning (ΔΔG) on the GPU, built on [TMol](https://github.com/uw-ipd/tmol).**
+**Ensemble-based interface mutational scanning (ΔΔG) on the GPU, built on [TMol](https://github.com/RosettaCommons/tmol).**
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-arantes/tmol-mutscan/blob/main/colab/tmol_mutscan_colab.ipynb)
 
@@ -138,8 +138,15 @@ a ranking signal, not an absolute prediction.
 
 ## Installation
 
-TMol requires **Python ≥ 3.11**. If your base environment is older, make a new
-one — this is the single most common installation problem.
+TMol requires **Python ≥ 3.12** as of TMol 1.0.0 (0.2.x needed ≥ 3.11). If
+your base environment is older, make a new one — this is the single most common
+installation problem.
+
+`tmol-mutscan` is tested against **TMol 0.2.0 and 1.0.0** and works with either.
+TMol 1.0.0 consolidated its public API onto the top-level `tmol` namespace and
+changed `fast_relax`'s signature; those differences are absorbed in
+`tmol_mutscan/_compat.py`, so no pin is needed. The accuracy benchmark below
+was measured on 0.2.0.
 
 ### CPU (Linux, macOS including Apple Silicon)
 
@@ -193,15 +200,24 @@ silently running on the CPU.
 
 ### Notes
 
-- **Apple Silicon**: CPU only. TMol has no MPS backend, so `--device mps` is
-  rejected and `--device auto` selects `cpu`. The script runs correctly but
-  without the GPU speedup.
+- **Apple Silicon**: `--device mps` is still rejected and `--device auto`
+  selects `cpu`, because TMol has no MPS *device* backend. But **TMol 1.0.0
+  added transparent Metal offload**: a CPU score function hands its LJ/LK and
+  electrostatic kernels to the Apple GPU, so a Mac is no longer purely CPU-bound.
+  That needs the `metal` compiler, which ships with **full Xcode and not with
+  the Command Line Tools alone** — without it a scan dies partway through
+  packing with `tmol MPS: shader library compilation failed`. `tmol-mutscan`
+  checks for the compiler at startup and sets `TMOL_MPS_OFFLOAD=0` when it is
+  absent, so the run completes on the CPU with a one-line notice instead.
+  Install full Xcode to get the offload; set `TMOL_MPS_OFFLOAD` yourself to
+  override either way.
 - **`OMP: Error #15` (duplicate OpenMP runtime)**: common in conda
   environments that mix PyTorch with conda-installed numerics. `tmol-mutscan`
   sets `KMP_DUPLICATE_LIB_OK=TRUE` for you; a clean environment is still the
   better fix.
-- Installing TMol pulls in RDKit and Open Babel for ligand chemistry, so the
-  first install downloads a few hundred MB.
+- **Ligand chemistry is an optional extra from TMol 1.0.0 on.** RDKit and Open
+  Babel are no longer pulled in by default; install `tmol[ligand]` if you scan
+  protein–ligand complexes. The first install still downloads a few hundred MB.
 
 ---
 
@@ -656,7 +672,9 @@ the benchmark mutations, reproducing the rule's discrimination to within noise.
 
 ### Two findings that change how you run it
 
-**More sampling does not help.** Raising `--relax-repeats` from 1 to 4 on the
+**More sampling does not help** — and the TMol authors reach for the same
+setting: every energy-function benchmark in their paper uses a **single-repeat
+Cartesian FastRelax**. Raising `--relax-repeats` from 1 to 4 on the
 same 178 mutations moved r from 0.647 to 0.652 — noise — at four times the
 cost. Ensemble noise is 0.5% of prediction variance. **The error is in the
 energy function, not the sampling**, so keep `--relax-repeats` at 1–2 and
@@ -668,6 +686,35 @@ which is a useful reproducibility result in itself.)
 both bulkier by >30 Å³ and hydrophobic were optimistic by **0.76 kcal/mol on
 average** (n = 28, p = 0.014); 19 were predicted stabilizing and only 6 were.
 Discount them, even at high trust.
+
+### Does this transfer to TMol 1.0.0?
+
+**The benchmark was measured on TMol 0.2.0, and 1.0.0 changes the numbers.**
+Running the same scan on both (15 substitutions, 8 conformers each, identical
+seed and inputs):
+
+| | value |
+|---|---|
+| mean \|difference\| | **1.19 REU** (max 6.72) |
+| typical within-version SD | 0.75 REU |
+| differences beyond 2× combined SEM | **7 of 15** — not sampling noise |
+| direction | almost all toward **more destabilizing** on 1.0.0 |
+| Pearson r between versions | 0.90 |
+| Spearman ρ between versions | **0.87** |
+| `trust` labels changed | 5 of 15 |
+
+So the **ranking largely survives** (ρ = 0.87) but **absolute magnitudes do
+not**, and the largest shifts are again the bulky substitutions into tight
+pockets (L26W: 4.3 → 11.0 REU). The likely cause is 1.0.0's move to AtomWorks
+3.1 and Biotite 2, which changes input processing.
+
+Consequence: the `--trust-ddg-cutoff` of 2.0 REU was calibrated on 0.2.0
+magnitudes, which 1.0.0 shifts upward, so the rule labels *more* predictions
+`high` than it should. `tmol-mutscan` prints a warning when the installed TMol
+is not the benchmarked release, and `run_manifest.json` always records the
+version actually used. **Re-running the benchmark on 1.0.0 would recalibrate
+it**; until then, treat 1.0.0 trust labels as optimistic and compare ΔΔG values
+only within one TMol version.
 
 ### What the benchmark does not cover
 
@@ -705,6 +752,7 @@ to change.**
 | Score function | `get_fa_scorefxn()` (ref2015) | `beta2016_score_function` |
 | Ensemble | `BackrubMover` + `GenericMonteCarloMover`, then `FastRelax` per structure, in a Python loop | one **batched** `fast_relax` over N copies; stochastic packing puts each copy in its own minimum. Optional `--perturb` widens it. |
 | Mutation | `PackRotamersMover` + `RestrictAbsentCanonicalAASRLT`, one pose at a time | **batched** `pack_rotamers`: one packing call per chunk, per-pose identity masks |
+| Rotamer set | `-ex1 -ex2` (extra chi1/chi2 sub-rotamers), Rosetta's bump check **on** | no chi expansion, bump check **off** — see below |
 | Neighbour shell | `NeighborhoodResidueSelector` | enclosing-sphere adjacency, `--shell-gap` |
 | Interface energy | `bound − unbound` via a 100 Å `RigidBodyTransMover` | `calculate_block_pair_ddg` sums the cross-partner terms directly — same quantity, no separated pose |
 | Relief of strain | none (pack only) | Cartesian minimisation of the mutated shell, on by default |
@@ -751,6 +799,29 @@ more `--relax-repeats` to re-converge.
 Always check `ensemble/ensemble_scores.csv`: a wide `total_score` spread means
 the members are not equivalently relaxed, and the ΔΔG error bars will inherit
 that inconsistency. Raise `--relax-repeats` if so.
+
+### Note on the rotamer set
+
+The two workflows sample rotamers differently, in **opposite directions**, and
+neither difference is controlled here:
+
+- Your notebook ran `pyrosetta.init('-ex1 -ex2')`, which adds extra
+  standard-deviation samples around chi1 and chi2. TMol's `PackerTask`
+  defaults to no chi expansion and never calls `or_expand_chi`, so on this axis
+  the port samples a **coarser** set. On the 1YCR test case, enabling the
+  equivalent expansion shifted individual ΔΔG values by up to 5.4 REU —
+  systematically making mutants look better — but cost 44× the packing time and
+  9.3 GB for four poses on CPU, which is why it is not exposed as a flag.
+- Conversely, the TMol paper reports that TMol **disables Rosetta's bump
+  check** by default, which in Rosetta discards roughly 40% of candidate
+  rotamers before pair energies are computed. TMol therefore considers about
+  **60% more rotamers** than PyRosetta during relax, and the paper attributes
+  its *improved* rotamer recovery to keeping near-native rotamers that the bump
+  check throws away. The check is still available via `PackerTask.or_bump_check()`.
+
+So the net difference in rotamer sampling versus a `-ex1 -ex2` PyRosetta run is
+of unknown sign. Treat absolute ΔΔG magnitudes as protocol-specific and compare
+only within one protocol.
 
 ---
 
@@ -839,19 +910,58 @@ the spread, not a single pack.
 
 ## Citation
 
-If this script contributes to published work, cite TMol, which does the
-science:
+If this tool contributes to published work, **cite TMol**, which provides the
+energy function and sampling algorithms this script orchestrates:
 
-> Andrew Leaver-Fay, Jeff Flatten, Alex Ford, Joseph Kleinhenz, Henry Solberg,
-> David Baker, Andrew M. Watkins, Brian Kuhlman, Frank DiMaio. *tmol: a
-> GPU-accelerated, PyTorch implementation of Rosetta's relax protocol*
-> (manuscript in preparation). https://github.com/uw-ipd/tmol
+> Leaver-Fay A, Didi K, Flatten J, Ford A, Zhou G, Corley N, Park H, Kazman MW,
+> Brent RI, Kleinhenz J, Solberg H, Watkins AM, Kuhlman B, Baker D, DiMaio F.
+> **tmol: a GPU-accelerated implementation of the Rosetta energy function for
+> machine learning.** *arXiv* 2611.21857 (2026).
+> <https://arxiv.org/abs/2611.21857>
 
-and note the protocol: ensemble-based interface ΔΔG scanning with
-`tmol-mutscan` (https://github.com/pablo-arantes/tmol-mutscan), beta2016 score
-function, N conformers, with or without shell minimisation, as recorded in
-`run_manifest.json`.
+```bibtex
+@article{tmol2026,
+  title  = {tmol: a GPU-accelerated implementation of the Rosetta energy
+            function for machine learning},
+  author = {Leaver-Fay, Andrew and Didi, Kieran and Flatten, Jeff and
+            Ford, Alex and Zhou, Guangfeng and Corley, Nathaniel and
+            Park, Hahnbeom and Kazman, Maxwell W. and Brent, Rafael I. and
+            Kleinhenz, Joseph and Solberg, Henry and Watkins, Andrew M. and
+            Kuhlman, Brian and Baker, David and DiMaio, Frank},
+  journal = {arXiv},
+  volume  = {2611.21857},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2611.21857}
+}
+```
+
+See [`CITATION.cff`](CITATION.cff) for a machine-readable version.
+
+Then describe the protocol: ensemble-based interface ΔΔG scanning with
+`tmol-mutscan` (https://github.com/pablo-arantes/tmol-mutscan), beta2016
+(RosettaGenFF: `beta_nov2016` with `gen_bonded`), N conformers, with or without
+shell minimisation, as recorded in `run_manifest.json`.
+
+### What the TMol paper establishes, and what it does not
+
+The paper reports that TMol reproduces PyRosetta's score terms closely —
+**Pearson r ≥ 0.97 for every term and 0.997 for the total** across 1,000
+high-resolution structures — and matches PyRosetta within run-to-run variation
+on decoy discrimination, rotamer recovery, ligand docking and **stability
+ΔΔG**, at 233–362× the throughput for score-plus-gradient.
+
+That is parity of the *energy function and sampler*, which matters here for one
+specific reason: **it means the accuracy limits measured in
+[the benchmark below](#how-accurate-is-it-benchmark-results) are properties of
+the Rosetta energy function, not artefacts of this port.** The same limits
+would apply to the equivalent PyRosetta protocol.
+
+It is not a statement about interface binding ΔΔG. The paper's ΔΔG benchmark is
+**folding** free energy for ~1,200 point mutations (monomer stability); the
+benchmark here is **binding** ΔΔG against SKEMPI 2.0. Different quantities, so
+the two results are complementary rather than in conflict.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). TMol is Apache-2.0 and is not redistributed here.
+MIT — see [LICENSE](LICENSE). TMol is BSD-3-Clause and is not redistributed
+here.

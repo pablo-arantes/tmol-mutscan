@@ -16,6 +16,9 @@ import torch
 from . import __version__
 from .logging_utils import get_logger, setup_logging
 
+_METAL_NOTE: str | None = None
+"""Set by the macOS Metal guard in main(), logged once in _prepare()."""
+
 EPILOG = """\
 selection syntax (--partner-a, --partner-b, --scan)
   '*'                every residue
@@ -319,6 +322,11 @@ def _prepare(args: argparse.Namespace, log_name: str):
         torch.set_num_threads(args.threads)
         log.info("torch CPU threads: %d", args.threads)
 
+    from ._compat import tmol_layout
+
+    log.info(tmol_layout())
+    if _METAL_NOTE:
+        log.warning(_METAL_NOTE)
     device = resolve_device(args.device)
     structure = load_structure(
         args.input, device, prepare_ligands=args.prepare_ligands, model=args.model
@@ -416,6 +424,11 @@ def cmd_info(args: argparse.Namespace) -> int:
     from .structure import describe_structure, load_structure, resolve_device
 
     setup_logging(args.verbose)
+    from ._compat import tmol_layout
+
+    log.info(tmol_layout())
+    if _METAL_NOTE:
+        log.warning(_METAL_NOTE)
     device = resolve_device(args.device)
     structure = load_structure(
         args.input, device, prepare_ligands=args.prepare_ligands, model=args.model
@@ -876,6 +889,12 @@ def main(argv: list[str] | None = None) -> int:
     # TMol's CPU kernels and OpenMP can collide with a second OpenMP runtime
     # loaded by conda-installed numerics; make the failure non-fatal.
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    # Must happen before TMol renders any scoring module, which is earlier
+    # than logging is configured, so the note is emitted later in _prepare.
+    global _METAL_NOTE
+    from ._compat import guard_macos_metal_offload
+
+    _METAL_NOTE = guard_macos_metal_offload()
     try:
         return args.func(args)
     except KeyboardInterrupt:

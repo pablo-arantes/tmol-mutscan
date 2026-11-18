@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import torch
 
-from tmol.io import extended_pose_stack_from_sequences
+from tmol_mutscan._compat import extended_pose_stack_from_sequences
 
 from tmol_mutscan.interface import (
     BURIAL_THRESHOLD,

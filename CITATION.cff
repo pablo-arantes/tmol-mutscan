@@ -1,0 +1,58 @@
+cff-version: 1.2.0
+title: tmol-mutscan
+message: >-
+  If you use this software, please cite the TMol paper below, which provides the
+  energy function and sampling algorithms this tool orchestrates.
+type: software
+authors:
+  - family-names: Arantes
+    given-names: Pablo R.
+repository-code: "https://github.com/pablo-arantes/tmol-mutscan"
+abstract: >-
+  Ensemble-based interface mutational scanning (ddG) on GPU with TMol, for
+  peptide-protein, protein-protein and protein-ligand complexes.
+license: MIT
+references:
+  - type: article
+    title: >-
+      tmol: a GPU-accelerated implementation of the Rosetta energy function for
+      machine learning
+    authors:
+      - family-names: Leaver-Fay
+        given-names: Andrew
+      - family-names: Didi
+        given-names: Kieran
+      - family-names: Flatten
+        given-names: Jeff
+      - family-names: Ford
+        given-names: Alex
+      - family-names: Zhou
+        given-names: Guangfeng
+      - family-names: Corley
+        given-names: Nathaniel
+      - family-names: Park
+        given-names: Hahnbeom
+      - family-names: Kazman
+        given-names: Maxwell W.
+      - family-names: Brent
+        given-names: Rafael I.
+      - family-names: Kleinhenz
+        given-names: Joseph
+      - family-names: Solberg
+        given-names: Henry
+      - family-names: Watkins
+        given-names: Andrew M.
+      - family-names: Kuhlman
+        given-names: Brian
+      - family-names: Baker
+        given-names: David
+      - family-names: DiMaio
+        given-names: Frank
+    year: 2026
+    journal: arXiv
+    identifiers:
+      - type: other
+        value: "arXiv:2611.21857"
+        description: arXiv preprint identifier
+    url: "https://arxiv.org/abs/2611.21857"
+    repository-code: "https://github.com/RosettaCommons/tmol"

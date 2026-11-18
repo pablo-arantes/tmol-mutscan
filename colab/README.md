@@ -1,7 +1,15 @@
 # Colab notebooks
 
 Two notebooks, both runnable on Colab's free GPU. They install
-**v0.3.0** by default.
+**v0.4.0** by default.
+
+> **TMol 1.0.0 note.** `tmol-mutscan` works with TMol 0.2.x and 1.x, but the
+> accuracy benchmark below was measured on **0.2.0**, and 1.0.0 shifts
+> individual ΔΔG values (mean |difference| 1.19 REU, up to 6.7; ranking mostly
+> preserved at ρ = 0.87). The tool warns when the installed TMol is not the
+> benchmarked release, and `run_manifest.json` records the version used.
+> TMol 1.0.0 also needs **Python 3.12+** and moved ligand chemistry behind a
+> `ligand` extra, which cell 2 of the scan notebook now offers as a checkbox.
 
 | Notebook | Purpose | |
 |---|---|---|

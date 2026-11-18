@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmol-mutscan"
-version = "0.3.0"
+version = "0.4.0"
 description = "Ensemble-based interface mutational scanning (ddG) on GPU with TMol"
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,11 +35,14 @@ dependencies = [
 [project.optional-dependencies]
 cu12 = ["tmol[cu12]>=0.2.0"]
 cu13 = ["tmol[cu13]>=0.2.0"]
+# TMol 1.0.0 moved ligand chemistry (RDKit, Open Babel) behind its own extra,
+# so protein-ligand scans need this on 1.x. Harmless on 0.2.x.
+ligand = ["tmol[ligand]>=1.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/pablo-arantes/tmol-mutscan"
 Issues = "https://github.com/pablo-arantes/tmol-mutscan/issues"
-"TMol upstream" = "https://github.com/uw-ipd/tmol"
+"TMol upstream" = "https://github.com/RosettaCommons/tmol"
 
 [project.scripts]
 tmol-mutscan = "tmol_mutscan.cli:main"

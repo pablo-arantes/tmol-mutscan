@@ -28,19 +28,18 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from tmol.database import ParameterDatabase
-from tmol.io import (
+from ._compat import (
+    ParameterDatabase,
+    PoseStack,
+    PoseStackBuilder,
+    ScoreFunction,
     atom_array_from_file,
+    calculate_block_pair_ddg,
     file_from_pose_stack,
     pose_stack_from_atom_array,
     pose_stack_from_file,
+    relax_poses,
 )
-from tmol.kinematics import CartesianMoveMap, FoldForest
-from tmol.ops import calculate_block_pair_ddg
-from tmol.pack import PackerPalette
-from tmol.pose import PoseStack, PoseStackBuilder
-from tmol.relax import fast_relax
-from tmol.score import ScoreFunction
 
 from .logging_utils import get_logger
 
@@ -115,14 +114,8 @@ def generate_ensemble(
         )
         t0 = time.perf_counter()
         torch.manual_seed(seed + done)
-        relaxed = fast_relax(
-            batch,
-            sfxn,
-            PackerPalette(),
-            CartesianMoveMap(),
-            FoldForest.reasonable_fold_forest(batch),
-            num_repeats=relax_repeats,
-            verbose=verbose,
+        relaxed = relax_poses(
+            batch, sfxn, num_repeats=relax_repeats, verbose=verbose
         )
         elapsed = time.perf_counter() - t0
         log.info("  %d conformers in %.1fs (%.1fs/conformer)", size, elapsed, elapsed / size)

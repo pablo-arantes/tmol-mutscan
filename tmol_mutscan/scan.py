@@ -52,20 +52,25 @@ import numpy as np
 import pandas as pd
 import torch
 
-from tmol.chemical import one2three, three2one
-from tmol.database import ParameterDatabase
-from tmol.optimization import run_cart_min
-from tmol.ops import (
+from ._compat import (
+    FixedAAChiSampler,
+    IncludeCurrentSampler,
+    PackerPalette,
+    PackerTask,
+    ParameterDatabase,
+    PoseStack,
+    PoseStackBuilder,
+    ScoreFunction,
     build_coord_mask_for_mask_and_interacting_atoms,
     calculate_block_pair_ddg,
     compute_block_adjacency,
     compute_block_centroids_and_furthest_dist,
+    create_dunbrack_sampler_from_database,
+    one2three,
+    pack_rotamers,
+    run_cart_min,
+    three2one,
 )
-from tmol.pack import PackerPalette, PackerTask, pack_rotamers
-from tmol.pack.rotamer import FixedAAChiSampler, IncludeCurrentSampler
-from tmol.pack.rotamer.dunbrack import create_dunbrack_sampler_from_database
-from tmol.pose import PoseStack, PoseStackBuilder
-from tmol.score import ScoreFunction
 
 from .logging_utils import get_logger
 from .structure import Residue

@@ -30,11 +30,17 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tmol.chemical import three2one
-from tmol.database import ParameterDatabase
-from tmol.io import atom_array_from_file, pose_stack_from_atom_array, pose_stack_from_file
-from tmol.pose import PoseStack, get_ligand_mask, get_polymer_type_mask
-from tmol.score import beta2016_score_function
+from ._compat import (
+    ParameterDatabase,
+    PoseStack,
+    atom_array_from_file,
+    beta2016_score_function,
+    get_ligand_mask,
+    get_polymer_type_mask,
+    pose_stack_from_atom_array,
+    pose_stack_from_file,
+    three2one,
+)
 
 from .logging_utils import get_logger
 

@@ -53,9 +53,9 @@ import torch
 from scipy import special as spspecial
 from scipy import stats as sps
 
-from tmol.pose import PoseStack
-from tmol.score import ScoreFunction
+from ._compat import PoseStack, ScoreFunction
 
+from ._compat import BENCHMARKED_TMOL, TMOL_VERSION, tmol_matches_benchmark
 from .interface import assign_trust
 from .logging_utils import get_logger
 from .structure import Residue
@@ -145,8 +145,8 @@ def aggregate(
             substitution is flagged as paying hidden intramolecular cost.
         locations: Optional map from position label to interface burial class
             (``core``/``support``/``rim``/...), used by the trust rule.
-        trust_cutoff: Minimum \|ddG\| in REU for a core prediction to be
-            trusted, in REU.
+        trust_cutoff: Minimum absolute ddG in REU for a core prediction to be
+            trusted.
     """
     log = get_logger()
     usable = usable_rows(raw)
@@ -273,6 +273,17 @@ def aggregate(
         log.warning(
             "no burial classification available, so no prediction can reach "
             "'high' trust; the rule needs a core/rim label"
+        )
+    if not tmol_matches_benchmark():
+        log.warning(
+            "the trust rule and its %.1f REU cutoff were calibrated on TMol %s, "
+            "but TMol %s is installed. TMol 1.0.0 shifts individual ddG values "
+            "by ~1.2 REU on average (up to ~6.7) relative to 0.2.0, mostly "
+            "toward more destabilizing, so trust labels may be optimistic. The "
+            "ranking is largely preserved (rho ~ 0.87); the magnitudes are not.",
+            trust_cutoff,
+            BENCHMARKED_TMOL,
+            TMOL_VERSION,
         )
     n_sig = int(stats.significant.sum())
     log.info(

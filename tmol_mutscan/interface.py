@@ -32,8 +32,7 @@ import warnings
 import numpy as np
 import torch
 
-from tmol.io import atom_array_from_pose_stack
-from tmol.pose import PoseStack
+from ._compat import PoseStack, atom_array_from_pose_stack
 
 from .logging_utils import get_logger
 
