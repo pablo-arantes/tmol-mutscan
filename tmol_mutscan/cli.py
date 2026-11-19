@@ -889,12 +889,12 @@ def main(argv: list[str] | None = None) -> int:
     # TMol's CPU kernels and OpenMP can collide with a second OpenMP runtime
     # loaded by conda-installed numerics; make the failure non-fatal.
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-    # Must happen before TMol renders any scoring module, which is earlier
-    # than logging is configured, so the note is emitted later in _prepare.
+    # The guard itself runs when _compat is imported, so library callers are
+    # covered too; here we only surface what it decided.
     global _METAL_NOTE
-    from ._compat import guard_macos_metal_offload
+    from ._compat import METAL_GUARD_NOTE
 
-    _METAL_NOTE = guard_macos_metal_offload()
+    _METAL_NOTE = METAL_GUARD_NOTE
     try:
         return args.func(args)
     except KeyboardInterrupt:

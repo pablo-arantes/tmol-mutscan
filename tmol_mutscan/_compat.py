@@ -208,6 +208,22 @@ def relax_poses(pose_stack, sfxn, *, num_repeats: int = 2, verbose: bool = False
     )
 
 
+#: Message from the macOS Metal guard, which runs once when this module is
+#: imported so library users are protected too, not only the CLI. The CLI logs
+#: it; a library caller can read it.
+METAL_GUARD_NOTE: str | None = None
+
+
+def _run_metal_guard_once() -> None:
+    global METAL_GUARD_NOTE
+    METAL_GUARD_NOTE = guard_macos_metal_offload()
+
+
+# Must happen before any scoring module is rendered, and importing this module
+# is the earliest point every entry path shares.
+_run_metal_guard_once()
+
+
 def tmol_layout() -> str:
     """Human-readable note on the detected TMol release.
 
