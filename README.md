@@ -925,6 +925,34 @@ the spread, not a single pack.
 
 ---
 
+## Continuous integration
+
+[![CI](https://github.com/pablo-arantes/tmol-mutscan/actions/workflows/ci.yml/badge.svg)](https://github.com/pablo-arantes/tmol-mutscan/actions/workflows/ci.yml)
+
+TMol has twice changed its API in ways that broke this package without any
+change here, so CI checks against **both supported TMol releases** (0.2.0, the
+one the benchmark was measured on, and 1.0.0, the current one) and runs weekly
+as well as on every push.
+
+| Job | What it catches |
+|---|---|
+| `notebooks-static` | Bad notebook JSON, syntax errors, stored outputs, **direct `tmol.<submodule>` imports**, broken Colab badges. No dependencies, runs in seconds. |
+| `tests` (per TMol release) | The unit suite, then **executes the notebooks' module-level imports**, then an end-to-end scan asserting W23A on 1YCR comes out destabilizing from a `core` position. |
+
+The direct-import rule exists because the notebooks are not part of the
+installed package, so `pytest` never imports them — which is exactly how a
+break shipped: TMol 0.3.0 made `one2three` private, the package's imports were
+migrated behind `_compat`, and three import lines *inside the notebooks* were
+missed. That one rule needs no dependencies and would have caught it.
+
+Run the same checks locally:
+
+```bash
+python scripts/check_notebooks.py                     # static, no deps
+python scripts/check_notebooks.py --execute-imports   # needs the package + ipython
+python -m pytest tests/ -q
+```
+
 ## Citation
 
 If this tool contributes to published work, **cite TMol**, which provides the

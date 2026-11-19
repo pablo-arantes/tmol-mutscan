@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # TMol releases have twice broken this package without any change here, so
+  # check against the current release on a schedule too, not only on a push.
+  schedule:
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Catches the notebook failure modes with no dependencies at all, in seconds:
+  # bad JSON, syntax errors, stored outputs, direct TMol submodule imports and
+  # broken Colab badges. The import rule alone would have caught the TMol 0.3.0
+  # break that this job exists for.
+  notebooks-static:
+    name: notebooks (static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check notebooks without installing anything
+        run: python scripts/check_notebooks.py
+
+  # The real verification: run the package's tests and actually execute the
+  # notebooks' imports against each supported TMol release.
+  tests:
+    name: tests (TMol ${{ matrix.tmol }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The release the accuracy benchmark was measured on.
+          - tmol: "0.2.0"
+            python: "3.12"
+          # The current release; its API reorganisation is what _compat absorbs.
+          - tmol: "1.0.0"
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install CPU PyTorch first
+        # The default wheel carries CUDA and is several GB; TMol only needs
+        # torch>=2.11, so the CPU build keeps the job small and fast.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install TMol ${{ matrix.tmol }}
+        run: python -m pip install "tmol==${{ matrix.tmol }}"
+
+      - name: Install this package and test tools
+        # ipython is a notebook-runtime dependency, needed to execute the
+        # notebooks' import cells.
+        run: python -m pip install -e . pytest ipython
+
+      - name: Report the resolved environment
+        run: |
+          python - <<'PY'
+          import tmol, torch, biotite, tmol_mutscan
+          print(f"tmol-mutscan {tmol_mutscan.__version__}")
+          print(f"tmol         {tmol.__version__}")
+          print(f"torch        {torch.__version__}")
+          print(f"biotite      {biotite.__version__}")
+          from tmol_mutscan._compat import tmol_layout, tmol_matches_benchmark
+          print(tmol_layout(), "| matches benchmarked release:", tmol_matches_benchmark())
+          PY
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+      - name: Execute the notebooks' imports
+        run: python scripts/check_notebooks.py --execute-imports
+
+      - name: End-to-end scan
+        # Proves the science path works on this TMol, not just that it imports.
+        # Deliberately tiny: two conformers, one position, two substitutions.
+        run: |
+          python - <<'PY'
+          import urllib.request, pathlib
+          pathlib.Path("ci_data").mkdir(exist_ok=True)
+          urllib.request.urlretrieve(
+              "https://files.rcsb.org/download/1YCR.pdb", "ci_data/1ycr.pdb"
+          )
+          print("fetched 1YCR")
+          PY
+          tmol-mutscan run -i ci_data/1ycr.pdb \
+            --partner-a A --partner-b B --scan 'B:23' --mutations 'A,F' \
+            -n 2 --relax-repeats 1 --seed 7 -o ci_out --no-plots
+          python - <<'PY'
+          import pandas as pd
+          stats = pd.read_csv("ci_out/stats/ddg_statistics.csv")
+          real = stats[~stats.is_wt_self]
+          assert len(real) == 2, f"expected 2 substitutions, got {len(real)}"
+          for column in ("ddg_mean", "strain_mean", "trust", "location"):
+              assert column in stats.columns, f"missing column {column}"
+          # W23A removes the p53 hotspot; it must come out clearly destabilizing
+          # on any working build.
+          w23a = real[real.mut_aa == "A"].iloc[0]
+          assert w23a.ddg_mean > 5.0, f"W23A ddG {w23a.ddg_mean}, expected > 5 REU"
+          assert w23a.location == "core", f"W23 classified {w23a.location}, expected core"
+          print(f"W23A ddG {w23a.ddg_mean:.2f} REU, location {w23a.location}, "
+                f"trust {w23a.trust} -- sane")
+          PY
