@@ -137,6 +137,17 @@ a ranking signal, not an absolute prediction.
 
 ## Installation
 
+> **Note (v0.2.1).** This is v0.2.0 with one change: TMol is pinned to
+> `>=0.2.0,<0.3`. TMol 0.3.0 consolidated its public API onto the top-level
+> `tmol` namespace and changed `fast_relax`'s signature, which this version's
+> code predates, so an unpinned install silently resolved to an incompatible
+> TMol and failed on import. The pin resolves to TMol 0.2.0, the release this
+> version was developed and benchmarked against.
+>
+> For current work use the latest release, which supports TMol 0.2.x and 1.x
+> through a compatibility layer.
+
+
 TMol requires **Python ≥ 3.11**. If your base environment is older, make a new
 one — this is the single most common installation problem.
 
