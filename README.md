@@ -143,10 +143,27 @@ your base environment is older, make a new one — this is the single most commo
 installation problem.
 
 `tmol-mutscan` is tested against **TMol 0.2.0 and 1.0.0** and works with either.
-TMol 1.0.0 consolidated its public API onto the top-level `tmol` namespace and
-changed `fast_relax`'s signature; those differences are absorbed in
-`tmol_mutscan/_compat.py`, so no pin is needed. The accuracy benchmark below
-was measured on 0.2.0.
+TMol **0.3.0** consolidated its public API onto the top-level `tmol` namespace,
+made `one2three`/`three2one` private and changed `fast_relax`'s signature; those
+differences are absorbed in `tmol_mutscan/_compat.py`, so no pin is needed here.
+The accuracy benchmark below was measured on TMol 0.2.0.
+
+### Older releases
+
+Releases before v0.4.0 predate that TMol reorganisation and requested an
+unpinned `tmol>=0.2.0`, which started resolving to the incompatible TMol 0.3.0
+and broke them on a fresh install. Each now pins `tmol>=0.2.0,<0.3`:
+
+| Install as | Reports | Content |
+|---|---|---|
+| `@v0.1.0` or `@v0.1.1` | 0.1.1 | v0.1.0 + the pin |
+| `@v0.2.0` or `@v0.2.1` | 0.2.1 | v0.2.0 + the pin |
+| `@v0.3.0` or `@v0.3.1` | 0.3.1 | v0.3.0 + the pin |
+
+The `vX.Y.0` tags were repointed so existing install commands keep working; the
+`vX.Y.1` names are immutable and point at the same commits. The original
+unpinned commits are each the parent of their patched commit, so nothing was
+lost. For current work use the latest release.
 
 ### CPU (Linux, macOS including Apple Silicon)
 
